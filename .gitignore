@@ -30,3 +30,5 @@ Thumbs.db
 Python-3.12.8/
 Python-3.12.8.tgz
 .claude/
+stockmind_prompt2.txt
+truncation_char.txt

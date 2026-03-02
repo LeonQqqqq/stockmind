@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"regexp"
-	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -35,13 +34,18 @@ type SQLiteConfig struct {
 	Path string `yaml:"path"`
 }
 
-var envRe = regexp.MustCompile(`\$\{(\w+)\}`)
+var envRe = regexp.MustCompile(`\$\{(\w+)(?::-(.*?))?\}`)
 
 func expandEnv(s string) string {
 	return envRe.ReplaceAllStringFunc(s, func(m string) string {
-		key := strings.TrimSuffix(strings.TrimPrefix(m, "${"), "}")
+		matches := envRe.FindStringSubmatch(m)
+		key := matches[1]
+		defaultVal := matches[2]
 		if v := os.Getenv(key); v != "" {
 			return v
+		}
+		if defaultVal != "" {
+			return defaultVal
 		}
 		return m
 	})

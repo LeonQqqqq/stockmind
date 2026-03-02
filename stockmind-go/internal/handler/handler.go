@@ -2,9 +2,11 @@ package handler
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -13,8 +15,6 @@ import (
 	"stockmind-go/internal/service"
 	"stockmind-go/internal/store"
 )
-
-var _ = fmt.Sprintf // keep fmt import
 
 type Handler struct {
 	chatSvc *service.ChatService
@@ -29,18 +29,25 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	api := r.Group("/api/v1")
 	{
 		api.POST("/chat/stream", h.ChatStream)
-
 		api.GET("/sessions", h.ListSessions)
 		api.POST("/sessions", h.CreateSession)
 		api.DELETE("/sessions/:id", h.DeleteSession)
 		api.GET("/sessions/:id/messages", h.GetMessages)
-
 		api.GET("/experiences", h.ListExperiences)
 		api.POST("/experiences", h.CreateExperience)
 		api.PUT("/experiences/:id", h.UpdateExperience)
 		api.DELETE("/experiences/:id", h.DeleteExperience)
 		api.GET("/experiences/search", h.SearchExperiences)
 	}
+}
+
+// writeSSE writes a raw SSE event without JSON encoding.
+func writeSSE(w io.Writer, event, data string) {
+	fmt.Fprintf(w, "event: %s\n", event)
+	for _, line := range strings.Split(data, "\n") {
+		fmt.Fprintf(w, "data: %s\n", line)
+	}
+	fmt.Fprintf(w, "\n")
 }
 
 // ChatStream handles SSE streaming chat
@@ -53,7 +60,6 @@ func (h *Handler) ChatStream(c *gin.Context) {
 
 	if req.SessionID == "" {
 		req.SessionID = uuid.New().String()
-		// Create session with first message as title
 		title := req.Message
 		if len(title) > 50 {
 			title = title[:50] + "..."
@@ -66,29 +72,27 @@ func (h *Handler) ChatStream(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	// Send session ID
-	c.SSEvent("session", req.SessionID)
+	writeSSE(c.Writer, "session", req.SessionID)
 	c.Writer.Flush()
 
 	textCh := make(chan string, 10)
-
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- h.chatSvc.Chat(req.SessionID, req.Message, textCh)
 	}()
 
 	for text := range textCh {
-		c.SSEvent("message", text)
+		writeSSE(c.Writer, "message", text)
 		c.Writer.Flush()
 	}
 
 	if err := <-errCh; err != nil {
 		log.Printf("Chat error: %v", err)
-		c.SSEvent("error", err.Error())
+		writeSSE(c.Writer, "error", err.Error())
 		c.Writer.Flush()
 	}
 
-	c.SSEvent("done", "[DONE]")
+	writeSSE(c.Writer, "done", "[DONE]")
 	c.Writer.Flush()
 }
 
@@ -220,4 +224,3 @@ func CORSMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
-

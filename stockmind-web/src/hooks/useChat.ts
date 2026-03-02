@@ -10,7 +10,7 @@ export function useChat() {
   const store = useChatStore;
 
   const sendMessage = useCallback(async (content: string) => {
-    const { currentSessionId, addMessage, setCurrentSession, setStreaming, setStreamingText, appendStreamingText } = store.getState();
+    const { currentSessionId, addMessage, setStreaming, setStreamingText } = store.getState();
 
     addMessage({
       id: genId(),
@@ -39,6 +39,7 @@ export function useChat() {
       const decoder = new TextDecoder();
       let buffer = '';
       let currentEvent = '';
+      let dataLines: string[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -51,22 +52,26 @@ export function useChat() {
         for (const line of lines) {
           if (line.startsWith('event:')) {
             currentEvent = line.slice(6).trim();
+            dataLines = [];
           } else if (line.startsWith('data:')) {
-            const data = line.slice(5).trim();
-            if (data === '[DONE]') continue;
+            dataLines.push(line.slice(5).trimStart());
+          } else if (line.trim() === '' && currentEvent) {
+            const data = dataLines.join('\n');
+            dataLines = [];
+            if (data === '[DONE]') { currentEvent = ''; continue; }
 
             if (currentEvent === 'session') {
               store.getState().setCurrentSession(data);
             } else if (currentEvent === 'error') {
-              store.getState().appendStreamingText(`\n\n**Error:** ${data}`);
+              store.getState().appendStreamingText('\n\n**Error:** ' + data);
             } else if (currentEvent === 'message') {
               store.getState().appendStreamingText(data);
             }
+            currentEvent = '';
           }
         }
       }
 
-      // Finalize
       const finalText = store.getState().streamingText;
       if (finalText) {
         store.getState().addMessage({
