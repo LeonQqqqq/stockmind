@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+
+# Go
+stockmind-go/server
+stockmind-go/*.db
+stockmind-go/*.db-shm
+stockmind-go/*.db-wal
+
+# Node
+stockmind-web/node_modules/
+stockmind-web/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+
+# Not project files
+Python-3.12.8/
+Python-3.12.8.tgz
+.claude/

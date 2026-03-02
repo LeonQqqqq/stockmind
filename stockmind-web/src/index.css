@@ -1,0 +1,106 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Claude-like warm color scheme */
+:root {
+  --bg-primary: #f5f0e8;
+  --bg-secondary: #ece5d5;
+  --bg-sidebar: #2f2b26;
+  --bg-input: #ffffff;
+  --bg-user-msg: #d4a574;
+  --bg-assistant-msg: #ffffff;
+  --text-primary: #2d2a26;
+  --text-secondary: #6b635a;
+  --text-sidebar: #c4bdb2;
+  --text-sidebar-active: #f5f0e8;
+  --border-color: #d9d0c3;
+  --border-sidebar: #3d3832;
+  --accent: #c96442;
+  --accent-hover: #b5573a;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+
+/* Markdown prose overrides for assistant messages */
+.assistant-prose {
+  @apply text-sm leading-relaxed;
+}
+.assistant-prose h1,
+.assistant-prose h2,
+.assistant-prose h3 {
+  color: var(--text-primary);
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+.assistant-prose h1 { font-size: 1.25em; }
+.assistant-prose h2 { font-size: 1.1em; }
+.assistant-prose h3 { font-size: 1em; }
+.assistant-prose p {
+  margin: 0.5em 0;
+}
+.assistant-prose ul, .assistant-prose ol {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+.assistant-prose li {
+  margin: 0.25em 0;
+}
+.assistant-prose code {
+  background: #f0ebe3;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 0.9em;
+  color: var(--accent);
+}
+.assistant-prose pre {
+  background: #2f2b26;
+  color: #e8e0d4;
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  margin: 0.75em 0;
+}
+.assistant-prose pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+.assistant-prose table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75em 0;
+  font-size: 0.85em;
+}
+.assistant-prose th,
+.assistant-prose td {
+  border: 1px solid var(--border-color);
+  padding: 6px 10px;
+  text-align: left;
+}
+.assistant-prose th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+.assistant-prose blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 12px;
+  margin: 0.75em 0;
+  color: var(--text-secondary);
+}
+.assistant-prose strong {
+  font-weight: 600;
+}
+.assistant-prose hr {
+  border: none;
+  border-top: 1px solid var(--border-color);
+  margin: 1em 0;
+}
+.assistant-prose a {
+  color: var(--accent);
+  text-decoration: underline;
+}
