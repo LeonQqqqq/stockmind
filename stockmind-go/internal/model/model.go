@@ -40,11 +40,22 @@ type Message struct {
 
 type Experience struct {
 	ID        int64     `json:"id"`
+	Type      string    `json:"type"`
 	Title     string    `json:"title"`
 	Content   string    `json:"content"`
 	Tags      string    `json:"tags"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// === Opinions (智囊团观点) ===
+
+type Opinion struct {
+	ID        int64     `json:"id"`
+	Author    string    `json:"author"`
+	Content   string    `json:"content"`
+	Tags      string    `json:"tags"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // === Claude API types ===

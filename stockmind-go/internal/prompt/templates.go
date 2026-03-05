@@ -129,7 +129,36 @@ const SystemPrompt = `# StockMind System Prompt
 - 搜索股票/币种基本信息
 - 市场代码规则：A股用数字如"600519"(market="cn")，美股如"AAPL"(market="us")，加密如"BTC"(market="crypto")
 
-当你需要数据来支撑分析时，主动调用工具获取，不要凭记忆编造数据。如果某个数据获取失败，直接告诉用户你拿不到这个数据，让用户提供，不要瞎编。
+**工具使用规则（必须严格遵守）：**
+1. 当用户提到股票名称（如"拓维信息""茅台"）而非代码时，**必须先调用 search_stock 工具**获取股票代码，然后再用代码调用其他工具
+2. 调用工具时**必须传入所有 required 参数**，不要传空值或省略参数
+3. 如果搜索失败或数据获取失败，直接告诉用户你拿不到这个数据，让用户提供股票代码，不要凭记忆编造数据
+4. 示例流程：用户说"分析拓维信息" → 先 search_stock(market="cn", keyword="拓维信息") 得到代码002261 → 再 get_realtime_quote(market="cn", symbol="002261")
+
+---
+
+## 智囊团系统
+
+用户有一个"智囊团"——一批他长期跟踪、验证过正确率的分析师/博主/大V。用户会把他们的观点发给你，附带作者名。
+
+**当用户发来某人的观点时：**
+1. 用 save_opinion 工具记录（author=作者名, content=观点核心摘要, tags=相关标签）
+2. 提炼这个观点背后的分析框架和推理链条——他看到了什么现象，用了什么逻辑，得出了什么判断
+3. 如果观点涉及具体板块或方向，且你手上有相关数据，简要验证或补充，但不要喧宾夺主——用户发来的是别人的观点，不是在问你的分析
+
+**当用户分析某个板块/方向时：**
+- 用 search_opinions 查智囊团里有没有人聊过相关话题
+- 如果有，自然地引用："之前XX说过一个观点挺有意思..."，不要生硬地列出来
+- 如果智囊团里有互相矛盾的观点，把分歧点摆出来，说清楚各自的逻辑，不要替用户选边
+
+**提取学习价值的原则：**
+- 重点提炼思维方式和分析框架，不是具体结论。比如某人判断"科技板块要调整"，重点是他怎么推导出来的（量价背离、政策窗口期、资金轮动节奏），而不是"调整"这个词本身
+- 特别关注那些"事后被验证正确"的观点里用到的分析方法——这才是可以复用的东西
+- 不同人可能擅长不同维度（有人擅长宏观判断，有人擅长技术面，有人擅长情绪面），记住每个人的强项，引用时带上这个上下文
+
+**格式要求：**
+- 记录观点时，摘要控制在2-3句话，抓核心判断和关键逻辑，不要照抄原文
+- tags用来标记板块/主题（如"科技""黄金""宏观""情绪面"），方便后续检索
 
 ---
 
@@ -141,13 +170,18 @@ const SystemPrompt = `# StockMind System Prompt
 - 禁止说"以上仅为个人观点，不构成投资建议"——你就是来给投资建议的，但要确保建议有逻辑
 - 禁止对同一个问题给出"如果A就B，如果C就D，如果E就F"的多重分支而不表明你倾向哪个`
 
-func GetTools() []model.ClaudeTool {
+func GetWebTools() []model.ClaudeTool {
 	return []model.ClaudeTool{
 		{
 			Type:    "web_search_20250305",
 			Name:    "web_search",
 			MaxUses: 5,
 		},
+	}
+}
+
+func GetTools() []model.ClaudeTool {
+	return []model.ClaudeTool{
 		{
 			Name:        "get_realtime_quote",
 			Description: "获取股票/加密货币实时行情。返回最新价格、涨跌幅、成交量等数据。",
@@ -226,6 +260,83 @@ func GetTools() []model.ClaudeTool {
 					},
 				},
 				"required": []string{"market", "keyword"},
+			},
+		},
+		{
+			Name:        "save_experience",
+			Description: "保存投资经验到用户的经验库。当对话中出现有价值的教训、策略、复盘结论时主动调用。type: insight=经验教训, trade=操作记录。",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"type": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"insight", "trade"},
+						"description": "insight=经验教训/策略总结, trade=具体买卖操作记录",
+					},
+					"title": map[string]interface{}{
+						"type":        "string",
+						"description": "简短标题，如'追高茅台的教训'或'买入拓维信息35.8'",
+					},
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "详细内容，包含关键数据和结论",
+					},
+					"tags": map[string]interface{}{
+						"type":        "string",
+						"description": "逗号分隔的标签，如'茅台,追高,止损'",
+					},
+				},
+				"required": []string{"type", "title", "content"},
+			},
+		},
+		{
+			Name:        "search_experience",
+			Description: "搜索用户的投资经验库。分析股票前先搜一下用户是否有相关的历史经验或操作记录，让建议更贴合用户实际情况。",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"keyword": map[string]interface{}{
+						"type":        "string",
+						"description": "搜索关键词，如股票名称、策略类型等",
+					},
+				},
+				"required": []string{"keyword"},
+			},
+		},
+		{
+			Name:        "save_opinion",
+			Description: "保存智囊团成员的观点。当用户发来某人的股评、观点、判断时调用此工具记录。",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"author": map[string]interface{}{
+						"type":        "string",
+						"description": "观点作者的名字/昵称",
+					},
+					"content": map[string]interface{}{
+						"type":        "string",
+						"description": "观点原文或核心摘要",
+					},
+					"tags": map[string]interface{}{
+						"type":        "string",
+						"description": "逗号分隔的标签，如'机器人,宏观,板块轮动'",
+					},
+				},
+				"required": []string{"author", "content"},
+			},
+		},
+		{
+			Name:        "search_opinions",
+			Description: "搜索智囊团的历史观点。可按作者名、关键词搜索。分析某个板块/方向时，先搜一下智囊团里有没有人聊过相关话题。",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"keyword": map[string]interface{}{
+						"type":        "string",
+						"description": "搜索关键词，可以是作者名、板块名、股票名等",
+					},
+				},
+				"required": []string{"keyword"},
 			},
 		},
 	}

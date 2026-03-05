@@ -56,18 +56,26 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 	// Save user message
 	s.store.SaveMessage(sessionID, "user", userMessage)
 
-	tools := prompt.GetTools()
+	customTools := prompt.GetTools()
+	webTools := prompt.GetWebTools()
 
 	for loop := 0; loop < maxToolLoops; loop++ {
+		// Send with web_search only first; relay API crashes when mixing server tools + custom tools
 		req := model.ClaudeRequest{
 			System:   prompt.SystemPrompt,
 			Messages: messages,
-			Tools:    tools,
+			Tools:    append(webTools, customTools...),
 		}
 
 		resp, err := s.claude.SendMessage(req)
 		if err != nil {
-			return fmt.Errorf("claude API call: %w", err)
+			// Relay API may fail when web_search fires alongside custom tools.
+			// Retry without web_search.
+			req.Tools = customTools
+			resp, err = s.claude.SendMessage(req)
+			if err != nil {
+				return fmt.Errorf("claude API call: %w", err)
+			}
 		}
 
 		// Check for tool_use blocks (only our custom tools, not server_tool_use)
@@ -95,10 +103,18 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 			return nil
 		}
 
-		// Has tool calls - append assistant message, call tools, build results
+		// Has tool calls - append assistant message (filter out server_tool_use/web_search blocks
+		// to avoid relay API "Invalid encrypted_content" error on next round)
+		var cleanContent []model.ContentBlock
+		for _, block := range resp.Content {
+			if block.Type == "server_tool_use" || block.Type == "web_search_tool_result" {
+				continue
+			}
+			cleanContent = append(cleanContent, block)
+		}
 		messages = append(messages, model.ClaudeMessage{
 			Role:    "assistant",
-			Content: resp.Content,
+			Content: cleanContent,
 		})
 
 		// Call tools concurrently
@@ -120,9 +136,10 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 
 				log.Printf("[Tool] %s(%v)", toolUse.Name, inputMap)
 
-				data, err := s.data.CallTool(toolUse.Name, inputMap)
+				data, err := s.callTool(toolUse.Name, inputMap)
 				if err != nil {
-					data = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+					errMsg, _ := json.Marshal(map[string]string{"error": err.Error()})
+					data = string(errMsg)
 					log.Printf("[Tool] %s error: %v", toolUse.Name, err)
 				}
 
@@ -158,4 +175,67 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 	}
 
 	return fmt.Errorf("exceeded max tool loops (%d)", maxToolLoops)
+}
+
+// callTool routes tool calls to the appropriate handler.
+func (s *ChatService) callTool(name string, input map[string]interface{}) (string, error) {
+	switch name {
+	case "save_experience":
+		expType, _ := input["type"].(string)
+		title, _ := input["title"].(string)
+		content, _ := input["content"].(string)
+		tags, _ := input["tags"].(string)
+		id, err := s.store.CreateExperience(expType, title, content, tags)
+		if err != nil {
+			return "", err
+		}
+		result, _ := json.Marshal(map[string]interface{}{
+			"success": true,
+			"id":      id,
+			"message": "经验已保存",
+		})
+		return string(result), nil
+
+	case "search_experience":
+		keyword, _ := input["keyword"].(string)
+		exps, err := s.store.SearchExperiences(keyword)
+		if err != nil {
+			return "", err
+		}
+		result, _ := json.Marshal(map[string]interface{}{
+			"count":       len(exps),
+			"experiences": exps,
+		})
+		return string(result), nil
+
+	case "save_opinion":
+		author, _ := input["author"].(string)
+		content, _ := input["content"].(string)
+		tags, _ := input["tags"].(string)
+		id, err := s.store.CreateOpinion(author, content, tags)
+		if err != nil {
+			return "", err
+		}
+		result, _ := json.Marshal(map[string]interface{}{
+			"success": true,
+			"id":      id,
+			"message": "观点已记录",
+		})
+		return string(result), nil
+
+	case "search_opinions":
+		keyword, _ := input["keyword"].(string)
+		ops, err := s.store.SearchOpinions(keyword)
+		if err != nil {
+			return "", err
+		}
+		result, _ := json.Marshal(map[string]interface{}{
+			"count":    len(ops),
+			"opinions": ops,
+		})
+		return string(result), nil
+
+	default:
+		return s.data.CallTool(name, input)
+	}
 }

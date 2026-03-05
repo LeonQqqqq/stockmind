@@ -1,7 +1,7 @@
 claude:
   api_key: "${CLAUDE_API_KEY}"
   base_url: "${CLAUDE_BASE_URL:-https://api.anthropic.com}"
-  model: "claude-sonnet-4-5-20250929"
+  model: "claude-opus-4-6"
   max_tokens: 4096
 
 data_service:

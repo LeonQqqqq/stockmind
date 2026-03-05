@@ -38,6 +38,11 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.PUT("/experiences/:id", h.UpdateExperience)
 		api.DELETE("/experiences/:id", h.DeleteExperience)
 		api.GET("/experiences/search", h.SearchExperiences)
+		api.GET("/opinions", h.ListOpinions)
+		api.POST("/opinions", h.CreateOpinion)
+		api.DELETE("/opinions/:id", h.DeleteOpinion)
+		api.GET("/opinions/authors", h.ListAuthors)
+		api.GET("/opinions/search", h.SearchOpinions)
 	}
 }
 
@@ -155,6 +160,7 @@ func (h *Handler) ListExperiences(c *gin.Context) {
 
 func (h *Handler) CreateExperience(c *gin.Context) {
 	var body struct {
+		Type    string `json:"type"`
 		Title   string `json:"title"`
 		Content string `json:"content"`
 		Tags    string `json:"tags"`
@@ -163,7 +169,7 @@ func (h *Handler) CreateExperience(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	id, err := h.store.CreateExperience(body.Title, body.Content, body.Tags)
+	id, err := h.store.CreateExperience(body.Type, body.Title, body.Content, body.Tags)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -210,6 +216,68 @@ func (h *Handler) SearchExperiences(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"data": exps})
+}
+
+// === Opinions ===
+
+func (h *Handler) ListOpinions(c *gin.Context) {
+	author := c.Query("author")
+	ops, err := h.store.ListOpinions(author)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": ops})
+}
+
+func (h *Handler) CreateOpinion(c *gin.Context) {
+	var body struct {
+		Author  string `json:"author"`
+		Content string `json:"content"`
+		Tags    string `json:"tags"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	id, err := h.store.CreateOpinion(body.Author, body.Content, body.Tags)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{"id": id}})
+}
+
+func (h *Handler) DeleteOpinion(c *gin.Context) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err := h.store.DeleteOpinion(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "ok"})
+}
+
+func (h *Handler) ListAuthors(c *gin.Context) {
+	authors, err := h.store.ListAuthors()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": authors})
+}
+
+func (h *Handler) SearchOpinions(c *gin.Context) {
+	keyword := c.Query("keyword")
+	if keyword == "" {
+		h.ListOpinions(c)
+		return
+	}
+	ops, err := h.store.SearchOpinions(keyword)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": ops})
 }
 
 func CORSMiddleware() gin.HandlerFunc {

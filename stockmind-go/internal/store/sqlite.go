@@ -44,11 +44,19 @@ func migrate(db *sql.DB) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS experiences (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			type TEXT NOT NULL DEFAULT 'insight',
 			title TEXT NOT NULL,
 			content TEXT NOT NULL,
 			tags TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS opinions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			author TEXT NOT NULL,
+			content TEXT NOT NULL,
+			tags TEXT DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 	}
 	for _, q := range queries {
@@ -56,6 +64,12 @@ func migrate(db *sql.DB) error {
 			return err
 		}
 	}
+
+	// Add type column to existing experiences table if missing
+	db.Exec("ALTER TABLE experiences ADD COLUMN type TEXT NOT NULL DEFAULT 'insight'")
+	// Create index after ensuring column exists
+	db.Exec("CREATE INDEX IF NOT EXISTS idx_experiences_type ON experiences(type)")
+
 	return nil
 }
 
@@ -141,9 +155,12 @@ func (s *SQLiteStore) GetMessages(sessionID string) ([]model.Message, error) {
 
 // === Experiences ===
 
-func (s *SQLiteStore) CreateExperience(title, content, tags string) (int64, error) {
-	res, err := s.db.Exec("INSERT INTO experiences (title, content, tags) VALUES (?, ?, ?)",
-		title, content, tags)
+func (s *SQLiteStore) CreateExperience(expType, title, content, tags string) (int64, error) {
+	if expType == "" {
+		expType = "insight"
+	}
+	res, err := s.db.Exec("INSERT INTO experiences (type, title, content, tags) VALUES (?, ?, ?, ?)",
+		expType, title, content, tags)
 	if err != nil {
 		return 0, err
 	}
@@ -151,7 +168,7 @@ func (s *SQLiteStore) CreateExperience(title, content, tags string) (int64, erro
 }
 
 func (s *SQLiteStore) ListExperiences() ([]model.Experience, error) {
-	rows, err := s.db.Query("SELECT id, title, content, tags, created_at, updated_at FROM experiences ORDER BY updated_at DESC")
+	rows, err := s.db.Query("SELECT id, type, title, content, tags, created_at, updated_at FROM experiences ORDER BY updated_at DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +176,7 @@ func (s *SQLiteStore) ListExperiences() ([]model.Experience, error) {
 	var exps []model.Experience
 	for rows.Next() {
 		var e model.Experience
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &e.Tags, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Title, &e.Content, &e.Tags, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
 		exps = append(exps, e)
@@ -180,7 +197,7 @@ func (s *SQLiteStore) DeleteExperience(id int64) error {
 
 func (s *SQLiteStore) SearchExperiences(keyword string) ([]model.Experience, error) {
 	rows, err := s.db.Query(
-		"SELECT id, title, content, tags, created_at, updated_at FROM experiences WHERE title LIKE ? OR content LIKE ? OR tags LIKE ? ORDER BY updated_at DESC",
+		"SELECT id, type, title, content, tags, created_at, updated_at FROM experiences WHERE title LIKE ? OR content LIKE ? OR tags LIKE ? ORDER BY updated_at DESC",
 		"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
 	if err != nil {
 		return nil, err
@@ -189,10 +206,85 @@ func (s *SQLiteStore) SearchExperiences(keyword string) ([]model.Experience, err
 	var exps []model.Experience
 	for rows.Next() {
 		var e model.Experience
-		if err := rows.Scan(&e.ID, &e.Title, &e.Content, &e.Tags, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Title, &e.Content, &e.Tags, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
 		exps = append(exps, e)
 	}
 	return exps, nil
+}
+
+// === Opinions ===
+
+func (s *SQLiteStore) CreateOpinion(author, content, tags string) (int64, error) {
+	res, err := s.db.Exec("INSERT INTO opinions (author, content, tags) VALUES (?, ?, ?)",
+		author, content, tags)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *SQLiteStore) ListOpinions(author string) ([]model.Opinion, error) {
+	var rows *sql.Rows
+	var err error
+	if author != "" {
+		rows, err = s.db.Query("SELECT id, author, content, tags, created_at FROM opinions WHERE author = ? ORDER BY created_at DESC", author)
+	} else {
+		rows, err = s.db.Query("SELECT id, author, content, tags, created_at FROM opinions ORDER BY created_at DESC")
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ops []model.Opinion
+	for rows.Next() {
+		var o model.Opinion
+		if err := rows.Scan(&o.ID, &o.Author, &o.Content, &o.Tags, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		ops = append(ops, o)
+	}
+	return ops, nil
+}
+
+func (s *SQLiteStore) SearchOpinions(keyword string) ([]model.Opinion, error) {
+	rows, err := s.db.Query(
+		"SELECT id, author, content, tags, created_at FROM opinions WHERE author LIKE ? OR content LIKE ? OR tags LIKE ? ORDER BY created_at DESC",
+		"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ops []model.Opinion
+	for rows.Next() {
+		var o model.Opinion
+		if err := rows.Scan(&o.ID, &o.Author, &o.Content, &o.Tags, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		ops = append(ops, o)
+	}
+	return ops, nil
+}
+
+func (s *SQLiteStore) ListAuthors() ([]string, error) {
+	rows, err := s.db.Query("SELECT DISTINCT author FROM opinions ORDER BY author")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var authors []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, err
+		}
+		authors = append(authors, a)
+	}
+	return authors, nil
+}
+
+func (s *SQLiteStore) DeleteOpinion(id int64) error {
+	_, err := s.db.Exec("DELETE FROM opinions WHERE id = ?", id)
+	return err
 }

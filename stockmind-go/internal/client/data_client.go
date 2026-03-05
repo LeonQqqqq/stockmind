@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"time"
 
 	"stockmind-go/internal/config"
@@ -32,11 +33,17 @@ func (c *DataClient) CallTool(toolName string, input map[string]interface{}) (st
 	case "get_realtime_quote":
 		market, _ := input["market"].(string)
 		symbol, _ := input["symbol"].(string)
+		if market == "" || symbol == "" {
+			return "", fmt.Errorf("get_realtime_quote requires market and symbol")
+		}
 		url = fmt.Sprintf("%s/api/v1/stock/%s/realtime?symbol=%s", c.baseURL, market, symbol)
 
 	case "get_kline":
 		market, _ := input["market"].(string)
 		symbol, _ := input["symbol"].(string)
+		if market == "" || symbol == "" {
+			return "", fmt.Errorf("get_kline requires market and symbol")
+		}
 		period, _ := input["period"].(string)
 		if period == "" {
 			period = "daily"
@@ -50,12 +57,18 @@ func (c *DataClient) CallTool(toolName string, input map[string]interface{}) (st
 
 	case "get_money_flow":
 		symbol, _ := input["symbol"].(string)
+		if symbol == "" {
+			return "", fmt.Errorf("get_money_flow requires symbol")
+		}
 		url = fmt.Sprintf("%s/api/v1/stock/cn/money_flow?symbol=%s", c.baseURL, symbol)
 
 	case "search_stock":
 		market, _ := input["market"].(string)
 		keyword, _ := input["keyword"].(string)
-		url = fmt.Sprintf("%s/api/v1/stock/%s/search?keyword=%s", c.baseURL, market, keyword)
+		if market == "" || keyword == "" {
+			return "", fmt.Errorf("search_stock requires market and keyword")
+		}
+		url = fmt.Sprintf("%s/api/v1/stock/%s/search?keyword=%s", c.baseURL, market, neturl.QueryEscape(keyword))
 
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
@@ -72,9 +85,13 @@ func (c *DataClient) CallTool(toolName string, input map[string]interface{}) (st
 		return "", fmt.Errorf("read response failed: %w", err)
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("data service HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
 	var dataResp model.DataResponse
 	if err := json.Unmarshal(body, &dataResp); err != nil {
-		return string(body), nil
+		return "", fmt.Errorf("data service parse error: %w", err)
 	}
 
 	if dataResp.Code != 0 {
