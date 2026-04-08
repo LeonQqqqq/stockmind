@@ -29,6 +29,9 @@ func NewClaudeClient(cfg config.ClaudeConfig) *ClaudeClient {
 		maxTokens: cfg.MaxTokens,
 		httpClient: &http.Client{
 			Timeout: 300 * time.Second,
+			Transport: &http.Transport{
+				DisableKeepAlives: true,
+			},
 		},
 	}
 }

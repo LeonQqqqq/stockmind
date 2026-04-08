@@ -101,28 +101,48 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 			return nil
 		}
 
-		// Has tool calls - build assistant message
-		// Filter out server_tool_use/web_search_tool_result to avoid relay errors on next round
+		// Build assistant message: convert server_tool_use → tool_use and strip web_search_tool_result
+		// (relay rejects server tool blocks in conversation history, but needs tool_use/tool_result pairs)
 		var cleanContent []model.ContentBlock
+		var serverToolResults []model.ToolResultContent // web search results to inject as tool_results
 		for _, block := range resp.Content {
-			if block.Type == "server_tool_use" || block.Type == "web_search_tool_result" {
-				continue
+			switch block.Type {
+			case "server_tool_use":
+				// Convert to regular tool_use so Claude sees it as a searchable history entry
+				cleanContent = append(cleanContent, model.ContentBlock{
+					Type:  "tool_use",
+					ID:    block.ID,
+					Name:  block.Name,
+					Input: block.Input,
+				})
+			case "web_search_tool_result":
+				// Extract search results to send back as tool_result
+				resultJSON, _ := json.Marshal(block.Content)
+				serverToolResults = append(serverToolResults, model.ToolResultContent{
+					Type:      "tool_result",
+					ToolUseID: block.ToolUseID,
+					Content:   string(resultJSON),
+				})
+			default:
+				cleanContent = append(cleanContent, block)
 			}
-			cleanContent = append(cleanContent, block)
 		}
 		messages = append(messages, model.ClaudeMessage{
 			Role:    "assistant",
 			Content: cleanContent,
 		})
 
-		// Build mock results for relay-returned web_search tool_use blocks
-		// (relay doesn't execute server tools, so we return empty results)
+		// Build tool results: web search results first, then custom tool results
 		var allToolResults []interface{}
+		for _, sr := range serverToolResults {
+			allToolResults = append(allToolResults, sr)
+		}
+		// Also send empty results for relay-returned web_search tool_use blocks
 		for _, wu := range webSearchUses {
 			allToolResults = append(allToolResults, model.ToolResultContent{
 				Type:      "tool_result",
 				ToolUseID: wu.ID,
-				Content:   `{"results": [], "message": "search not available via local routing"}`,
+				Content:   `{"results": [], "message": "already searched above"}`,
 			})
 		}
 
