@@ -132,12 +132,15 @@ func (c *ClaudeClient) SendMessage(req model.ClaudeRequest) (*model.ClaudeRespon
 			}
 
 		case "content_block_stop":
-			// Parse accumulated JSON input for tool_use blocks
-			if event.Index < len(contentBlocks) && contentBlocks[event.Index].Type == "tool_use" {
-				if raw, ok := inputAccum[event.Index]; ok && raw != "" {
-					var parsed interface{}
-					if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
-						contentBlocks[event.Index].Input = parsed
+			// Parse accumulated JSON input for tool_use and server_tool_use blocks
+			if event.Index < len(contentBlocks) {
+				blockType := contentBlocks[event.Index].Type
+				if blockType == "tool_use" || blockType == "server_tool_use" {
+					if raw, ok := inputAccum[event.Index]; ok && raw != "" {
+						var parsed interface{}
+						if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+							contentBlocks[event.Index].Input = parsed
+						}
 					}
 				}
 			}

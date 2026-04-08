@@ -60,7 +60,6 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 	webTools := prompt.GetWebTools()
 
 	for loop := 0; loop < maxToolLoops; loop++ {
-		// Send with web_search only first; relay API crashes when mixing server tools + custom tools
 		req := model.ClaudeRequest{
 			System:   prompt.SystemPrompt,
 			Messages: messages,
@@ -116,76 +115,64 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 			Content: cleanContent,
 		})
 
-		// If relay returned web_search as tool_use, send back empty results so Claude continues
-		if len(webSearchUses) > 0 && len(toolUses) == 0 {
-			var webResults []interface{}
-			for _, wu := range webSearchUses {
-				webResults = append(webResults, model.ToolResultContent{
-					Type:      "tool_result",
-					ToolUseID: wu.ID,
-					Content:   `{"results": [], "message": "search not available via local routing"}`,
-				})
-			}
-			messages = append(messages, model.ClaudeMessage{
-				Role:    "user",
-				Content: webResults,
+		// Build mock results for relay-returned web_search tool_use blocks
+		// (relay doesn't execute server tools, so we return empty results)
+		var allToolResults []interface{}
+		for _, wu := range webSearchUses {
+			allToolResults = append(allToolResults, model.ToolResultContent{
+				Type:      "tool_result",
+				ToolUseID: wu.ID,
+				Content:   `{"results": [], "message": "search not available via local routing"}`,
 			})
-			// Send partial text and continue loop so Claude can respond with what it has
-			for _, t := range textParts {
-				if t != "" {
-					textCh <- t
-				}
+		}
+
+		// Call custom tools concurrently
+		if len(toolUses) > 0 {
+			type toolResult struct {
+				idx    int
+				result model.ToolResultContent
 			}
-			continue
-		}
+			results := make([]toolResult, len(toolUses))
+			var wg sync.WaitGroup
 
-		// Call tools concurrently
-		type toolResult struct {
-			idx    int
-			result model.ToolResultContent
-		}
-		results := make([]toolResult, len(toolUses))
-		var wg sync.WaitGroup
+			for i, tu := range toolUses {
+				wg.Add(1)
+				go func(idx int, toolUse model.ContentBlock) {
+					defer wg.Done()
 
-		for i, tu := range toolUses {
-			wg.Add(1)
-			go func(idx int, toolUse model.ContentBlock) {
-				defer wg.Done()
+					inputMap := make(map[string]interface{})
+					inputBytes, _ := json.Marshal(toolUse.Input)
+					json.Unmarshal(inputBytes, &inputMap)
 
-				inputMap := make(map[string]interface{})
-				inputBytes, _ := json.Marshal(toolUse.Input)
-				json.Unmarshal(inputBytes, &inputMap)
+					log.Printf("[Tool] %s(%v)", toolUse.Name, inputMap)
 
-				log.Printf("[Tool] %s(%v)", toolUse.Name, inputMap)
+					data, err := s.callTool(toolUse.Name, inputMap)
+					if err != nil {
+						errMsg, _ := json.Marshal(map[string]string{"error": err.Error()})
+						data = string(errMsg)
+						log.Printf("[Tool] %s error: %v", toolUse.Name, err)
+					}
 
-				data, err := s.callTool(toolUse.Name, inputMap)
-				if err != nil {
-					errMsg, _ := json.Marshal(map[string]string{"error": err.Error()})
-					data = string(errMsg)
-					log.Printf("[Tool] %s error: %v", toolUse.Name, err)
-				}
+					results[idx] = toolResult{
+						idx: idx,
+						result: model.ToolResultContent{
+							Type:      "tool_result",
+							ToolUseID: toolUse.ID,
+							Content:   data,
+						},
+					}
+				}(i, tu)
+			}
+			wg.Wait()
 
-				results[idx] = toolResult{
-					idx: idx,
-					result: model.ToolResultContent{
-						Type:      "tool_result",
-						ToolUseID: toolUse.ID,
-						Content:   data,
-					},
-				}
-			}(i, tu)
-		}
-		wg.Wait()
-
-		// Build tool results in order
-		var toolResults []interface{}
-		for _, r := range results {
-			toolResults = append(toolResults, r.result)
+			for _, r := range results {
+				allToolResults = append(allToolResults, r.result)
+			}
 		}
 
 		messages = append(messages, model.ClaudeMessage{
 			Role:    "user",
-			Content: toolResults,
+			Content: allToolResults,
 		})
 
 		// Send partial text if any (tool calls may include text)
