@@ -69,30 +69,29 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 
 		resp, err := s.claude.SendMessage(req)
 		if err != nil {
-			// Relay API may fail when web_search fires alongside custom tools.
-			// Retry without web_search.
-			req.Tools = customTools
-			resp, err = s.claude.SendMessage(req)
-			if err != nil {
-				return fmt.Errorf("claude API call: %w", err)
-			}
+			return fmt.Errorf("claude API call: %w", err)
 		}
 
-		// Check for tool_use blocks (only our custom tools, not server_tool_use)
+		// Separate custom tool_use from web_search tool_use (relay sometimes returns
+		// web_search as tool_use instead of server_tool_use on subsequent calls)
 		var toolUses []model.ContentBlock
+		var webSearchUses []model.ContentBlock
 		var textParts []string
 
 		for _, block := range resp.Content {
 			switch block.Type {
 			case "tool_use":
-				toolUses = append(toolUses, block)
+				if block.Name == "web_search" {
+					webSearchUses = append(webSearchUses, block)
+				} else {
+					toolUses = append(toolUses, block)
+				}
 			case "text":
 				textParts = append(textParts, block.Text)
-			// server_tool_use, web_search_tool_result are handled server-side, just pass through
 			}
 		}
 
-		if len(toolUses) == 0 {
+		if len(toolUses) == 0 && len(webSearchUses) == 0 {
 			// No tool calls - final response
 			finalText := ""
 			for _, t := range textParts {
@@ -103,8 +102,8 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 			return nil
 		}
 
-		// Has tool calls - append assistant message (filter out server_tool_use/web_search blocks
-		// to avoid relay API "Invalid encrypted_content" error on next round)
+		// Has tool calls - build assistant message
+		// Filter out server_tool_use/web_search_tool_result to avoid relay errors on next round
 		var cleanContent []model.ContentBlock
 		for _, block := range resp.Content {
 			if block.Type == "server_tool_use" || block.Type == "web_search_tool_result" {
@@ -116,6 +115,29 @@ func (s *ChatService) Chat(sessionID, userMessage string, textCh chan<- string) 
 			Role:    "assistant",
 			Content: cleanContent,
 		})
+
+		// If relay returned web_search as tool_use, send back empty results so Claude continues
+		if len(webSearchUses) > 0 && len(toolUses) == 0 {
+			var webResults []interface{}
+			for _, wu := range webSearchUses {
+				webResults = append(webResults, model.ToolResultContent{
+					Type:      "tool_result",
+					ToolUseID: wu.ID,
+					Content:   `{"results": [], "message": "search not available via local routing"}`,
+				})
+			}
+			messages = append(messages, model.ClaudeMessage{
+				Role:    "user",
+				Content: webResults,
+			})
+			// Send partial text and continue loop so Claude can respond with what it has
+			for _, t := range textParts {
+				if t != "" {
+					textCh <- t
+				}
+			}
+			continue
+		}
 
 		// Call tools concurrently
 		type toolResult struct {
